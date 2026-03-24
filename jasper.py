@@ -227,7 +227,7 @@ class JasperActionDecoder(nn.Module):
 class JasperConfig:
     dtype: torch.dtype = torch.float32
     device: str = "cuda"
-    action_dim: int = 6
+    action_dim: int = 14
     action_horizon: int = 30
     hidden_dim: int = 512
     num_heads: int = 8
@@ -273,9 +273,7 @@ class Jasper(nn.Module):
         x_t = action * t[:, None, None] + noise * (1 - t)[:, None, None]
         v = self.action_decoder(x_t, t, cond)
 
-        loss = F.mse_loss(v, action - noise)
-
-        return loss
+        return F.mse_loss(v, action - noise)
 
 
 if __name__ == "__main__":
