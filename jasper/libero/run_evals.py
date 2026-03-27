@@ -278,7 +278,7 @@ async def run_evaluation(dataset_dir, norm_stats_path, server_url, max_episodes)
     print(f"  Norm stats: {norm_stats_path}")
     print(f"  Server:     {server_url}")
     print(f"  Tasks:      {len(hdf5_paths)}")
-    print(f"  Results:    {results_dir.absolute()}/")
+    print(f"  Results:    {results_dir.absolute()}")
     if max_episodes:
         print(f"  Max eps:    {max_episodes} per task")
 
