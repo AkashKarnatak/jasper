@@ -8,11 +8,6 @@ import cv2
 import torch
 from torch.utils.data import Dataset, DataLoader
 
-robowin_root = Path("/home/ubuntu/workspace/RoboTwin")
-if str(robowin_root) not in sys.path:
-    sys.path.insert(0, str(robowin_root))
-os.chdir(robowin_root)
-
 
 def decode_rgb(buf):
     """Decode a JPEG/PNG byte buffer to a BGR numpy array."""
@@ -105,7 +100,6 @@ class RoboTwinDataset(Dataset):
         self.camera_names = camera_names
         self._len = total_chunks
 
-
     def __len__(self):
         return self._len
 
@@ -141,8 +135,8 @@ class RoboTwinDataset(Dataset):
 
 
 if __name__ == "__main__":
-    train_ds = RoboTwinDataset("./dataset", split="train", chunk_size=30)
-    test_ds = RoboTwinDataset("./dataset", split="test", chunk_size=30)
+    train_ds = RoboTwinDataset("/home/ubuntu/workspace/RoboTwin/dataset", split="train", chunk_size=30)
+    test_ds = RoboTwinDataset("/home/ubuntu/workspace/RoboTwin/dataset", split="test", chunk_size=30)
     print(f"\nTrain chunks: {len(train_ds)}, Test chunks: {len(test_ds)}")
 
     sample = train_ds[0]

@@ -32,7 +32,8 @@ def main():
 
     dataset_dir = args.dataset_dir
     subdirs = sorted(
-        d for d in os.listdir(dataset_dir)
+        d
+        for d in os.listdir(dataset_dir)
         if os.path.isdir(os.path.join(dataset_dir, d))
     )
     assert len(subdirs) > 0, f"No subdirectories found in {dataset_dir}"
@@ -83,7 +84,7 @@ def main():
                 delta = batch_mean - mean
                 new_n = n + T
                 mean = (mean * n + batch_mean * T) / new_n
-                m2 += batch_var * T + delta ** 2 * (n * T / new_n)
+                m2 += batch_var * T + delta**2 * (n * T / new_n)
             n += T
 
     std = np.sqrt(m2 / n).clip(min=1e-6)

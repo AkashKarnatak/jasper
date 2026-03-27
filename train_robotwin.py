@@ -5,9 +5,7 @@ from jasper import Jasper, JasperConfig
 from torch.utils.data import DataLoader
 from pathlib import Path
 from torch.utils.tensorboard import SummaryWriter
-from robotwin.dataset import (
-    RoboTwinDataset,
-)  # this changes current root to RoboTwin root
+from robotwin.dataset import RoboTwinDataset
 
 
 def cycle(dataloader):
@@ -22,7 +20,7 @@ def dump_config(config, ckpt_dir):
 
 
 dataset_dir = "/home/ubuntu/workspace/RoboTwin/dataset"
-ckpt_dir = Path(__file__).resolve().parent / "./ckpts/robotwin"
+ckpt_dir = Path("./ckpts/robotwin")
 batch_size = 32
 amp_dtype = torch.bfloat16
 device = "cuda"
