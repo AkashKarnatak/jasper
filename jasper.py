@@ -14,7 +14,9 @@ def create_sinusoidal_embeddings(
 ):
     assert dim % 2 == 0
 
-    fraction = torch.linspace(0.0, 1.0, dim // 2, dtype=torch.float32, device=pos.device)
+    fraction = torch.linspace(
+        0.0, 1.0, dim // 2, dtype=torch.float32, device=pos.device
+    )
     period = min_period * (max_period / min_period) ** fraction
     scale = 2 * torch.pi / period
     theta = pos[:, None] * scale[None, :]
@@ -37,11 +39,16 @@ class RotaryEmbedding1D(nn.Module):
     def __init__(self, dim, base=10000.0):
         super().__init__()
 
-        scale = base ** (-torch.arange(0, dim, 2, dtype=torch.float32)[: dim // 2] / dim)
+        scale = base ** (
+            -torch.arange(0, dim, 2, dtype=torch.float32)[: dim // 2] / dim
+        )
         self.register_buffer("scale", scale, persistent=False)
 
     def forward(self, x):
-        freqs = torch.arange(x.shape[1], dtype=torch.float32, device=x.device)[:, None] * self.scale[None, :]
+        freqs = (
+            torch.arange(x.shape[1], dtype=torch.float32, device=x.device)[:, None]
+            * self.scale[None, :]
+        )
         freqs = torch.cat([freqs, freqs], dim=-1)
         return freqs.cos().to(x.dtype), freqs.sin().to(x.dtype)
 
@@ -58,14 +65,18 @@ class SelfAttention(nn.Module):
 
     def forward(self, x, pos_emb):
         qkv = self.qkv_proj(x)
-        qkv = rearrange(qkv, "b t (n nh hd) -> b (n nh) t hd", nh=self.num_heads, hd=self.head_dim)
+        qkv = rearrange(
+            qkv, "b t (n nh hd) -> b (n nh) t hd", nh=self.num_heads, hd=self.head_dim
+        )
         q, k, v = qkv.chunk(3, dim=1)
 
         cos, sin = pos_emb
         q = apply_rotary_emb(q, cos, sin)
         k = apply_rotary_emb(k, cos, sin)
 
-        x = F.scaled_dot_product_attention(q, k, v, dropout_p=self.attn_dropout if self.training else 0.0)
+        x = F.scaled_dot_product_attention(
+            q, k, v, dropout_p=self.attn_dropout if self.training else 0.0
+        )
         x = rearrange(x, "b nh t hd -> b t (nh hd)")
         x = self.o_proj(x)
 
@@ -87,10 +98,14 @@ class CrossAttention(nn.Module):
         q = self.q_proj(x)
         kv = self.kv_proj(cond)
         q = rearrange(q, "b t (nh hd) -> b nh t hd", nh=self.num_heads)
-        kv = rearrange(kv, "b t (n nh hd) -> b (n nh) t hd", nh=self.num_heads, hd=self.head_dim)
+        kv = rearrange(
+            kv, "b t (n nh hd) -> b (n nh) t hd", nh=self.num_heads, hd=self.head_dim
+        )
         k, v = kv.chunk(2, dim=1)
 
-        x = F.scaled_dot_product_attention(q, k, v, dropout_p=self.attn_dropout if self.training else 0.0)
+        x = F.scaled_dot_product_attention(
+            q, k, v, dropout_p=self.attn_dropout if self.training else 0.0
+        )
         x = rearrange(x, "b nh t hd -> b t (nh hd)")
         x = self.o_proj(x)
 
@@ -119,7 +134,9 @@ class JasperDecoderLayer(nn.Module):
         self.dropout1 = nn.Dropout(dropout)
         self.norm2_1 = nn.RMSNorm(hidden_dim)
         self.norm2_2 = nn.RMSNorm(hidden_dim)
-        self.cross_attn = CrossAttention(hidden_dim, hidden_dim, num_heads, head_dim, attn_dropout)
+        self.cross_attn = CrossAttention(
+            hidden_dim, hidden_dim, num_heads, head_dim, attn_dropout
+        )
         self.dropout2 = nn.Dropout(dropout)
         self.norm3 = nn.RMSNorm(hidden_dim)
         self.ffn = FeedForward(hidden_dim, ff_dim, dropout)
@@ -141,14 +158,18 @@ class JasperDecoderLayer(nn.Module):
             scale_ffn,
             gate_ffn,
         ) = (temb + self.modulation).chunk(11, dim=1)
-        x = x + gate_attn * self.dropout1(self.attn(self.norm1(x) * (1.0 + scale_attn) + shift_attn, pos_emb))
+        x = x + gate_attn * self.dropout1(
+            self.attn(self.norm1(x) * (1.0 + scale_attn) + shift_attn, pos_emb)
+        )
         x = x + gate_cross_attn * self.dropout2(
             self.cross_attn(
                 self.norm2_1(x) * (1.0 + scale1_cross_attn) + shift1_cross_attn,
                 self.norm2_2(cond) * (1.0 + scale2_cross_attn) + shift2_cross_attn,
             )
         )
-        x = x + gate_ffn * self.dropout3(self.ffn(self.norm3(x) * (1.0 + scale_ffn) + shift_ffn))
+        x = x + gate_ffn * self.dropout3(
+            self.ffn(self.norm3(x) * (1.0 + scale_ffn) + shift_ffn)
+        )
         return x
 
 
@@ -158,7 +179,9 @@ class JasperVisionEncoder(nn.Module):
 
         self.encoder, _ = torch.hub.load("facebookresearch/vjepa2", config.vjepa2_model)
         self.norm = nn.RMSNorm(self.encoder.blocks[-1].mlp.fc2.out_features)
-        self.o_proj = nn.Linear(self.encoder.blocks[-1].mlp.fc2.out_features, config.hidden_dim)
+        self.o_proj = nn.Linear(
+            self.encoder.blocks[-1].mlp.fc2.out_features, config.hidden_dim
+        )
 
         self.encoder.requires_grad_(False)
         self.encoder.eval()
@@ -193,7 +216,7 @@ class JasperActionDecoder(nn.Module):
                     dropout=config.dropout,
                     attn_dropout=config.attn_dropout,
                 )
-                for _ in range(config.decoder_num_layers)
+                for _ in range(config.depth)
             ]
         )
         self.action_mlp = nn.Linear(config.action_dim, config.hidden_dim)
@@ -225,19 +248,18 @@ class JasperActionDecoder(nn.Module):
 
 @dataclass
 class JasperConfig:
-    dtype: torch.dtype = torch.float32
-    device: str = "cuda"
-    action_dim: int = 14
-    action_horizon: int = 30
-    hidden_dim: int = 512
-    num_heads: int = 8
-    head_dim: int = 64
-    ff_dim: int = 3200
-    attn_dropout: float = 0.1
-    dropout: float = 0.1
-    decoder_num_layers: int = 4
-    vjepa2_model: str = "vjepa2_1_vit_base_384"
-    # vjepa2_model: str = "vjepa2_1_vit_gigantic_384"
+    device: str
+    dtype: str
+    action_dim: int
+    action_horizon: int
+    hidden_dim: int
+    num_heads: int
+    head_dim: int
+    ff_dim: int
+    depth: int
+    attn_dropout: float
+    dropout: float
+    vjepa2_model: str
 
 
 class Jasper(nn.Module):
@@ -255,8 +277,16 @@ class Jasper(nn.Module):
         cond = self.vision_encoder(images)
 
         dt = 1 / num_steps
-        x_t = torch.randn(images.shape[0], self.action_horizon, self.action_dim, dtype=cond.dtype, device=cond.device)
-        timesteps = torch.linspace(0.0, 1.0, num_steps + 1, dtype=cond.dtype, device=cond.device)[:-1]
+        x_t = torch.randn(
+            images.shape[0],
+            self.action_horizon,
+            self.action_dim,
+            dtype=cond.dtype,
+            device=cond.device,
+        )
+        timesteps = torch.linspace(
+            0.0, 1.0, num_steps + 1, dtype=cond.dtype, device=cond.device
+        )[:-1]
         timesteps = repeat(timesteps, "n -> n b", b=images.shape[0])
 
         for t in timesteps:
@@ -280,12 +310,27 @@ if __name__ == "__main__":
     device = "cuda"
     dtype = torch.float32
 
-    config = JasperConfig(device=device, dtype=dtype)
+    config = JasperConfig(
+        device=device,
+        dtype=str(dtype)[6:],
+        action_dim=14,
+        action_horizon=30,
+        hidden_dim=512,
+        num_heads=8,
+        head_dim=64,
+        ff_dim=3200,
+        depth=4,
+        attn_dropout=0.1,
+        dropout=0.1,
+        vjepa2_model="vjepa2_1_vit_base_384",
+    )
 
-    images = torch.randn(4, 3, 16, 256, 256, device=config.device, dtype=config.dtype)
-    action = torch.randn(4, config.action_horizon, config.action_dim, device=config.device, dtype=config.dtype)
+    images = torch.randn(4, 3, 16, 256, 256, device=config.device, dtype=dtype)
+    action = torch.randn(
+        4, config.action_horizon, config.action_dim, device=config.device, dtype=dtype
+    )
 
-    model = Jasper(config).to(config.dtype).to(config.device)
+    model = Jasper(config).to(dtype).to(config.device)
 
     loss = model(images, action)
     pred_action = model.sample_action(images, num_steps=10)
