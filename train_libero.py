@@ -39,13 +39,16 @@ ckpt_dir.mkdir(parents=True, exist_ok=True)
 
 config = JasperConfig(
     device=device,
-    action_horizon=10,
+    dtype="float32",
     action_dim=7,
+    action_horizon=10,
     hidden_dim=1536,
-    decoder_num_layers=16,
-    ff_dim=4096,
     num_heads=12,
     head_dim=128,
+    ff_dim=4096,
+    depth=16,
+    attn_dropout=0.1,
+    dropout=0.1,
     vjepa2_model="vjepa2_1_vit_gigantic_384",
 )
 model = Jasper(config).to(device, non_blocking=True)
