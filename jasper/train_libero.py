@@ -1,11 +1,11 @@
 import torch
 import time
 import json
-from jasper import Jasper, JasperConfig
 from torch.utils.data import DataLoader
 from pathlib import Path
 from torch.utils.tensorboard import SummaryWriter
-from libero.dataset import LiberoDataset
+from .jasper import Jasper, JasperConfig
+from .libero.dataset import LiberoDataset
 
 
 def cycle(dataloader):

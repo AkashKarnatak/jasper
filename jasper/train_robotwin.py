@@ -1,11 +1,11 @@
 import torch
 import time
 import json
-from jasper import Jasper, JasperConfig
 from torch.utils.data import DataLoader
 from pathlib import Path
 from torch.utils.tensorboard import SummaryWriter
-from robotwin.dataset import RoboTwinDataset
+from .jasper import Jasper, JasperConfig
+from .robotwin.dataset import RoboTwinDataset
 
 
 def cycle(dataloader):
