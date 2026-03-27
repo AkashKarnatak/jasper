@@ -28,8 +28,8 @@ lr = (batch_size / 32) * 1e-4
 weight_decay = 1e-3
 max_grad_norm = 1.0
 warmup_steps = 1000
-save_every = 4000 // (batch_size // 32)
-max_steps = 50_000 // (batch_size // 32)
+save_every = 1000 // (batch_size // 32)
+max_steps = 10_000 // (batch_size // 32)
 writer = SummaryWriter(f"./logs/jasper-robotwin/{time.time()}")
 
 ckpt_dir.mkdir(parents=True, exist_ok=True)
