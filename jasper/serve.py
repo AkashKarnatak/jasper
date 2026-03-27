@@ -1,11 +1,18 @@
+"""
+Usage:
+    python -m jasper.serve --ckpt-path ./ckpts/libero/checkpoint_24000.pt --compile
+    python -m jasper.serve --ckpt-path ./ckpts/robotwin/checkpoint_10000.pt
+"""
+
 import asyncio
 import json
 import msgpack
 import numpy as np
 import torch
+import argparse
 import websockets
 from pathlib import Path
-from ..jasper import Jasper, JasperConfig
+from .jasper import Jasper, JasperConfig
 
 
 def load_config(ckpt_dir):
@@ -80,18 +87,34 @@ async def serve():
 
 
 if __name__ == "__main__":
-    ckpt_path = Path("./ckpts/libero/checkpoint_24000.pt")
+    parser = argparse.ArgumentParser(
+        description="Runs the policy server"
+    )
+    parser.add_argument(
+        "--ckpt-path",
+        type=str,
+        required=True,
+        help="Path to the checkpoint",
+    )
+    parser.add_argument(
+        "--compile", action='store_true', help="Whether to compile vision encoder or not"
+    )
+    args = parser.parse_args()
+
+    print(args)
+    ckpt_path = Path(args.ckpt_path)
     ckpt_dir = ckpt_path.parent
 
     config = JasperConfig(**load_config(ckpt_dir))
     model = Jasper(config).to(config.device, non_blocking=True)
     processor = torch.hub.load("facebookresearch/vjepa2", "vjepa2_preprocessor")
 
-    model.vision_encoder = torch.compile(model.vision_encoder)
+    if args.compile:
+        model.vision_encoder = torch.compile(model.vision_encoder)
     state_dict = torch.load(str(ckpt_path))
     model.load_state_dict(state_dict)
     model.eval()
 
-    CHUNK_SIZE = 10
+    CHUNK_SIZE = config.action_horizon
 
     asyncio.run(serve())
