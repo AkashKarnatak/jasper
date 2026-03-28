@@ -5,7 +5,7 @@ Saves a .npz file in the dataset directory with keys:
     state_mean, state_std, action_mean, action_std
 
 Usage:
-    python compute_norm.py --dataset-dir libero/datasets/libero_90
+    python -m jasper.libero.compute_norm --dataset-dir /home/ubuntu/workspace/LIBERO/libero/datasets/libero_90
 """
 
 import argparse

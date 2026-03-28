@@ -60,7 +60,7 @@ async def handle_client(websocket):
             with torch.no_grad():
                 images = preprocess_images(frames)
                 actions = model.sample_action(
-                    images, num_steps=10
+                    images, num_steps=30
                 )  # (1, action_horizon, action_dim)
 
             actions_np = actions.cpu().numpy()
@@ -101,7 +101,6 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    print(args)
     ckpt_path = Path(args.ckpt_path)
     ckpt_dir = ckpt_path.parent
 
