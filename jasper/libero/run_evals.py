@@ -115,7 +115,7 @@ def save_video(frames, path, fps=20):
 
 async def evaluate_episode(ws, env, f, ep_key, action_mean, action_std, video_path):
     """Evaluate a single episode. Returns True if the task was completed."""
-    agentview_obs = f[f"data/{ep_key}/obs/agentview_rgb"][()]
+    agentview_obs = f[f"data/{ep_key}/obs/agentview_rgb"][()][:, ::-1].copy()
     num_frames = agentview_obs.shape[0]
     num_chunks = math.ceil(num_frames / CHUNK_SIZE)
 

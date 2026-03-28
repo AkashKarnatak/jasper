@@ -136,9 +136,9 @@ class LiberoDataset(Dataset):
         grp = f[f"data/{demo_key}"]
         s = slice(t, t + self.chunk_size)
 
-        # Raw images: (K, H, W, 3) uint8
-        agentview_raw = grp["obs/agentview_rgb"][s]
-        eye_in_hand_raw = grp["obs/eye_in_hand_rgb"][s]
+        # Raw images: (K, H, W, 3) uint8 — stored vertically flipped in LIBERO HDF5
+        agentview_raw = grp["obs/agentview_rgb"][s][:, ::-1].copy()
+        eye_in_hand_raw = grp["obs/eye_in_hand_rgb"][s][:, ::-1].copy()
 
         if self.use_vjepa2:
             # VJEPA2 preprocessor expects list of (H, W, 3) uint8 numpy frames
