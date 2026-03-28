@@ -61,6 +61,8 @@ class SelfAttention(nn.Module):
         self.head_dim = head_dim
         self.attn_dropout = attn_dropout
         self.qkv_proj = nn.Linear(hidden_dim, 3 * num_heads * head_dim)
+        self.q_norm = nn.RMSNorm(head_dim)
+        self.k_norm = nn.RMSNorm(head_dim)
         self.o_proj = nn.Linear(num_heads * head_dim, hidden_dim)
 
     def forward(self, x, pos_emb):
@@ -69,6 +71,8 @@ class SelfAttention(nn.Module):
             qkv, "b t (n nh hd) -> b (n nh) t hd", nh=self.num_heads, hd=self.head_dim
         )
         q, k, v = qkv.chunk(3, dim=1)
+
+        q, k = self.q_norm(q), self.k_norm(k)
 
         cos, sin = pos_emb
         q = apply_rotary_emb(q, cos, sin)
@@ -92,6 +96,8 @@ class CrossAttention(nn.Module):
         self.attn_dropout = attn_dropout
         self.q_proj = nn.Linear(q_dim, num_heads * head_dim)
         self.kv_proj = nn.Linear(kv_dim, 2 * num_heads * head_dim)
+        self.q_norm = nn.RMSNorm(head_dim)
+        self.k_norm = nn.RMSNorm(head_dim)
         self.o_proj = nn.Linear(num_heads * head_dim, q_dim)
 
     def forward(self, x, cond):
@@ -102,6 +108,8 @@ class CrossAttention(nn.Module):
             kv, "b t (n nh hd) -> b (n nh) t hd", nh=self.num_heads, hd=self.head_dim
         )
         k, v = kv.chunk(2, dim=1)
+
+        q, k = self.q_norm(q), self.k_norm(k)
 
         x = F.scaled_dot_product_attention(
             q, k, v, dropout_p=self.attn_dropout if self.training else 0.0
