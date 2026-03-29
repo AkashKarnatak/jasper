@@ -2,6 +2,7 @@ from einops import rearrange, repeat
 import torch
 from torch import nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 from dataclasses import dataclass
 
 
@@ -248,7 +249,7 @@ class JasperActionDecoder(nn.Module):
         pos_emb = self.rotary_emb(x)
 
         for layer in self.layers:
-            x = layer(x, temb, cond, pos_emb=pos_emb)
+            x = checkpoint(layer, x, temb, cond, pos_emb, use_reentrant=False)
 
         x = self.o_proj(self.norm(x))
         return x

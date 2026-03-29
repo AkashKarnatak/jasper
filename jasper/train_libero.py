@@ -24,7 +24,7 @@ norm_stats_path = (
     "/home/ubuntu/workspace/LIBERO/libero/datasets/libero_90/norm_stats.npz"
 )
 ckpt_dir = Path("./ckpts/libero")
-batch_size = 32
+batch_size = 64
 amp_dtype = torch.bfloat16
 device = "cuda"
 lr = (batch_size / 32) * 1e-4
