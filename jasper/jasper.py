@@ -282,7 +282,9 @@ class Jasper(nn.Module):
 
     @torch.inference_mode()
     def sample_action(self, images, num_steps):
-        cond = self.vision_encoder(images)
+        n = images.shape[1]
+        cond = self.vision_encoder(images.flatten(0, 1))
+        cond = rearrange(cond, '(b n) t d -> b (n t) d', n=n)
 
         dt = 1 / num_steps
         x_t = torch.randn(
@@ -304,7 +306,9 @@ class Jasper(nn.Module):
         return x_t
 
     def forward(self, images, action):
-        cond = self.vision_encoder(images)
+        n = images.shape[1]
+        cond = self.vision_encoder(images.flatten(0, 1))
+        cond = rearrange(cond, '(b n) t d -> b (n t) d', n=n)
 
         noise = torch.randn_like(action)
         t = torch.rand(images.shape[0], dtype=cond.dtype, device=cond.device)
@@ -333,7 +337,7 @@ if __name__ == "__main__":
         vjepa2_model="vjepa2_1_vit_base_384",
     )
 
-    images = torch.randn(4, 3, 16, 256, 256, device=config.device, dtype=dtype)
+    images = torch.randn(4, 2, 3, 16, 256, 256, device=config.device, dtype=dtype)
     action = torch.randn(
         4, config.action_horizon, config.action_dim, device=config.device, dtype=dtype
     )

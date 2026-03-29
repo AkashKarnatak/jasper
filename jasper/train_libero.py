@@ -24,7 +24,7 @@ norm_stats_path = (
     "/home/ubuntu/workspace/LIBERO/libero/datasets/libero_90/norm_stats.npz"
 )
 ckpt_dir = Path("./ckpts/libero")
-batch_size = 64
+batch_size = 32
 amp_dtype = torch.bfloat16
 device = "cuda"
 lr = (batch_size / 32) * 1e-4
@@ -91,7 +91,9 @@ dump_config(config, ckpt_dir)
 for step in range(max_steps):
     batch = next(dl_iter)
 
-    images = batch["agentview_rgb"].to(device, non_blocking=True)
+    head = batch["agentview_rgb"].to(device, non_blocking=True)
+    wrist = batch["eye_in_hand_rgb"].to(device, non_blocking=True)
+    images = torch.stack([head, wrist], dim=1)
     action = batch["action"].to(device, non_blocking=True)
 
     with torch.amp.autocast(device_type="cuda", dtype=amp_dtype):
