@@ -2,6 +2,15 @@
 Usage:
     python -m jasper.serve --ckpt-path ./ckpts/libero/checkpoint_24000.pt --compile
     python -m jasper.serve --ckpt-path ./ckpts/robotwin/checkpoint_10000.pt
+
+Protocol:
+    Client sends msgpack with:
+        {"views": [[frame, frame, ...], [frame, frame, ...], ...]}
+    where each view is a list of T serialized frames (dict with "data", "shape", "dtype"),
+    and each frame is a (H, W, 3) uint8 numpy array.
+
+    Server responds with:
+        {"actions": {"data": bytes, "shape": [1, T, action_dim], "dtype": "float32"}}
 """
 
 import asyncio
@@ -21,26 +30,35 @@ def load_config(ckpt_dir):
     return config
 
 
-def preprocess_images(frames_bytes_list):
-    """Decode a list of raw image arrays and preprocess with VJEPA2.
+def decode_view(frames_list):
+    """Decode a list of serialized frames for one view and preprocess with V-JEPA2.
 
     Args:
-        frames_bytes_list: list of 10 dicts with keys "data", "shape", "dtype"
-                           each representing a (H, W, 3) uint8 numpy array.
+        frames_list: list of T dicts with keys "data", "shape", "dtype"
 
     Returns:
-        Tensor of shape (1, 3, T, 256, 256) ready for model input.
+        Tensor of shape (3, T, 256, 256)
     """
     frames = []
-    for frame_msg in frames_bytes_list:
+    for frame_msg in frames_list:
         arr = np.frombuffer(frame_msg["data"], dtype=frame_msg["dtype"]).reshape(
             frame_msg["shape"]
         )
         frames.append(arr)
+    return processor(frames)[0]  # (3, T, 256, 256)
 
-    # processor expects list of (H, W, 3) numpy arrays -> [(3, T, 256, 256)]
-    processed = processor(frames)[0]  # (3, T, 256, 256)
-    return processed.unsqueeze(0).to(config.device)  # (1, 3, T, 256, 256)
+
+def preprocess_views(views):
+    """Preprocess N views into (1, N, 3, T, 256, 256).
+
+    Args:
+        views: list of N lists, each containing T serialized frames.
+
+    Returns:
+        Tensor of shape (1, N, 3, T, 256, 256)
+    """
+    tensors = [decode_view(view) for view in views]
+    return torch.stack(tensors).unsqueeze(0).to(config.device)  # (1, N, 3, T, 256, 256)
 
 
 async def handle_client(websocket):
@@ -48,32 +66,33 @@ async def handle_client(websocket):
     try:
         async for raw_message in websocket:
             msg = msgpack.unpackb(raw_message, raw=False)
-            frames = msg["frames"]  # list of 10 serialized frames
+            views = msg["views"]  # list of N views, each with T frames
 
-            if len(frames) != CHUNK_SIZE:
-                error = msgpack.packb(
-                    {"error": f"Expected {CHUNK_SIZE} frames, got {len(frames)}"}
+            for i, view in enumerate(views):
+                if len(view) != CHUNK_SIZE:
+                    error = msgpack.packb(
+                        {"error": f"View {i}: expected {CHUNK_SIZE} frames, got {len(view)}"}
+                    )
+                    await websocket.send(error)
+                    break
+            else:
+                with torch.no_grad():
+                    images = preprocess_views(views)
+                    actions = model.sample_action(
+                        images, num_steps=30
+                    )  # (1, action_horizon, action_dim)
+
+                actions_np = actions.cpu().numpy()
+                response = msgpack.packb(
+                    {
+                        "actions": {
+                            "data": actions_np.tobytes(),
+                            "shape": list(actions_np.shape),
+                            "dtype": str(actions_np.dtype),
+                        },
+                    }
                 )
-                await websocket.send(error)
-                continue
-
-            with torch.no_grad():
-                images = preprocess_images(frames)
-                actions = model.sample_action(
-                    images, num_steps=30
-                )  # (1, action_horizon, action_dim)
-
-            actions_np = actions.cpu().numpy()
-            response = msgpack.packb(
-                {
-                    "actions": {
-                        "data": actions_np.tobytes(),
-                        "shape": list(actions_np.shape),
-                        "dtype": str(actions_np.dtype),
-                    },
-                }
-            )
-            await websocket.send(response)
+                await websocket.send(response)
     except websockets.exceptions.ConnectionClosed:
         print(f"Client disconnected: {websocket.remote_address}")
 
