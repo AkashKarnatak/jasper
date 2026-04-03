@@ -11,3 +11,9 @@ wheels/
 logs/
 ckpts/
 results/
+*.pt
+*.mp4
+*.json
+*.tar
+*.png
+*.pdf
