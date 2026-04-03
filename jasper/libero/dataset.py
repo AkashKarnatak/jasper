@@ -36,6 +36,7 @@ Usage:
 """
 
 import bisect
+import json
 import os
 from glob import glob
 
@@ -46,7 +47,8 @@ from torch.utils.data import Dataset
 
 
 class LiberoDataset(Dataset):
-    def __init__(self, dataset_dir, norm_stats_path=None, chunk_size=1, use_vjepa2=False, transform=None):
+    def __init__(self, dataset_dir, norm_stats_path=None, chunk_size=1, use_vjepa2=False, transform=None,
+                 prompt_embeds_path=None, latent_dir=None):
         """
         Args:
             dataset_dir: Path to a folder of HDF5 files (e.g. "libero/datasets/libero_90")
@@ -60,11 +62,23 @@ class LiberoDataset(Dataset):
                         The transform parameter is ignored when this is True.
             transform: Optional transform applied to image tensors (both cameras).
                        Ignored when use_vjepa2=True.
+            prompt_embeds_path: Path to precomputed T5 prompt embeddings (.pt file).
+                                If provided, returns "prompt_embeds" tensor instead of
+                                "task_name" string.
+            latent_dir: Path to precomputed VAE latents directory. If provided,
+                        returns "latents" tensor instead of image tensors.
         """
         self.dataset_dir = dataset_dir
         self.transform = transform
         self.chunk_size = chunk_size
         self.use_vjepa2 = use_vjepa2
+        self.latent_dir = latent_dir
+
+        # Load precomputed prompt embeddings
+        if prompt_embeds_path is not None:
+            self._prompt_embeds = torch.load(prompt_embeds_path, weights_only=True)
+        else:
+            self._prompt_embeds = None
 
         if use_vjepa2:
             self.processor = torch.hub.load(
@@ -91,13 +105,31 @@ class LiberoDataset(Dataset):
         if len(self._hdf5_paths) == 0:
             raise FileNotFoundError(f"No HDF5 files found in {dataset_dir}")
 
+        # Load latent metadata if using precomputed VAE latents
+        if latent_dir is not None:
+            with open(os.path.join(latent_dir, "metadata.json")) as f:
+                latent_meta = json.load(f)
+            self._temporal_factor = latent_meta["temporal_factor"]
+            self._latent_chunk_size = chunk_size // self._temporal_factor
+            self._latent_cache = {}
+        else:
+            self._temporal_factor = None
+            self._latent_chunk_size = None
+            self._latent_cache = None
+
         total = 0
         for task_id, hdf5_path in enumerate(self._hdf5_paths):
             task_name = os.path.basename(hdf5_path).replace("_demo.hdf5", "")
+            task_name = ' '.join(task_name.split('SCENE')[-1].split('_')[1:])
             with h5py.File(hdf5_path, "r") as f:
                 for demo_key in sorted(f["data"].keys()):
                     num_steps = f[f"data/{demo_key}/actions"].shape[0]
-                    valid = num_steps - chunk_size + 1
+                    if latent_dir is not None:
+                        # Index by latent temporal positions
+                        num_latent_frames = num_steps // self._temporal_factor
+                        valid = num_latent_frames - self._latent_chunk_size + 1
+                    else:
+                        valid = num_steps - chunk_size + 1
                     if valid <= 0:
                         continue
                     self._demos.append((hdf5_path, task_id, task_name, demo_key))
@@ -120,6 +152,14 @@ class LiberoDataset(Dataset):
             self._h5_cache[path] = h5py.File(path, "r")
         return self._h5_cache[path]
 
+    def _get_latent(self, task_id, demo_key):
+        """Load and cache precomputed VAE latents for a demo."""
+        cache_key = (task_id, demo_key)
+        if cache_key not in self._latent_cache:
+            path = os.path.join(self.latent_dir, f"task_{task_id:03d}", f"{demo_key}.pt")
+            self._latent_cache[cache_key] = torch.load(path, weights_only=True)
+        return self._latent_cache[cache_key]
+
     def __len__(self):
         return self._total_len
 
@@ -132,6 +172,48 @@ class LiberoDataset(Dataset):
     def __getitem__(self, idx):
         demo_idx, t = self._resolve_idx(idx)
         hdf5_path, task_id, task_name, demo_key = self._demos[demo_idx]
+
+        if self.latent_dir is not None:
+            return self._getitem_latent(t, task_id, task_name, demo_key, hdf5_path)
+        return self._getitem_frames(t, task_id, task_name, demo_key, hdf5_path)
+
+    def _getitem_latent(self, lt, task_id, task_name, demo_key, hdf5_path):
+        """Latent mode: idx is a latent temporal index, derive actions from it."""
+        tf = self._temporal_factor
+        lcs = self._latent_chunk_size
+
+        # Slice latents: lt is the latent temporal index
+        latent_data = self._get_latent(task_id, demo_key)
+        agentview_latent = latent_data["agentview"][:, lt:lt + lcs].clone()
+        wrist_latent = latent_data["wrist"][:, lt:lt + lcs].clone()
+
+        # Derive action range from latent index
+        action_start = lt * tf
+        action_end = action_start + self.chunk_size
+        f = self._get_h5(hdf5_path)
+        grp = f[f"data/{demo_key}"]
+        action = grp["actions"][action_start:action_end].astype(np.float32)
+
+        if self._normalize:
+            action = (action - self._action_mean) / self._action_std
+
+        action = torch.from_numpy(action)
+
+        sample = {
+            "agentview_latent": agentview_latent,
+            "wrist_latent": wrist_latent,
+            "action": action,
+            "task_id": task_id,
+            "task_name": task_name,
+        }
+
+        if self._prompt_embeds is not None:
+            sample["prompt_embeds"] = self._prompt_embeds[task_name]
+
+        return sample
+
+    def _getitem_frames(self, t, task_id, task_name, demo_key, hdf5_path):
+        """Frame mode: original behavior, load raw images."""
         f = self._get_h5(hdf5_path)
         grp = f[f"data/{demo_key}"]
         s = slice(t, t + self.chunk_size)
@@ -141,12 +223,9 @@ class LiberoDataset(Dataset):
         eye_in_hand_raw = grp["obs/eye_in_hand_rgb"][s][:, ::-1].copy()
 
         if self.use_vjepa2:
-            # VJEPA2 preprocessor expects list of (H, W, 3) uint8 numpy frames
-            # and returns [(3, K, crop_size, crop_size)] float32 ImageNet-normalized
             agentview = self.processor(list(agentview_raw))[0]
             eye_in_hand = self.processor(list(eye_in_hand_raw))[0]
         else:
-            # (K, H, W, 3) uint8 -> (K, 3, H, W) float32 [0, 1]
             agentview = torch.from_numpy(
                 agentview_raw.astype(np.float32) / 255.0
             ).permute(0, 3, 1, 2)
@@ -173,7 +252,7 @@ class LiberoDataset(Dataset):
         state = torch.from_numpy(state)
         action = torch.from_numpy(action)
 
-        return {
+        sample = {
             "agentview_rgb": agentview,
             "eye_in_hand_rgb": eye_in_hand,
             "state": state,
@@ -181,6 +260,11 @@ class LiberoDataset(Dataset):
             "task_id": task_id,
             "task_name": task_name,
         }
+
+        if self._prompt_embeds is not None:
+            sample["prompt_embeds"] = self._prompt_embeds[task_name]
+
+        return sample
 
     def close(self):
         for f in self._h5_cache.values():
