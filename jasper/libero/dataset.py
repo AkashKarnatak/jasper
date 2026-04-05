@@ -125,9 +125,19 @@ class LiberoDataset(Dataset):
                 for demo_key in sorted(f["data"].keys()):
                     num_steps = f[f"data/{demo_key}/actions"].shape[0]
                     if latent_dir is not None:
-                        # Index by latent temporal positions
-                        num_latent_frames = num_steps // self._temporal_factor
-                        valid = num_latent_frames - self._latent_chunk_size + 1
+                        # WAN VAE: latent frame 0 = single first frame (skip it),
+                        # latent frames 1..N each = 4 video frames.
+                        # num usable latent frames = (num_steps - 1) // tf
+                        tf = self._temporal_factor
+                        lcs = self._latent_chunk_size
+                        num_usable_latent = (num_steps - 1) // tf
+                        # Also need enough video frames for the action chunk
+                        action_chunk = lcs * tf
+                        max_lt = min(
+                            num_usable_latent - lcs + 1,
+                            (num_steps - action_chunk - 1) // tf + 1,
+                        )
+                        valid = max(max_lt, 0)
                     else:
                         valid = num_steps - chunk_size + 1
                     if valid <= 0:
@@ -178,18 +188,28 @@ class LiberoDataset(Dataset):
         return self._getitem_frames(t, task_id, task_name, demo_key, hdf5_path)
 
     def _getitem_latent(self, lt, task_id, task_name, demo_key, hdf5_path):
-        """Latent mode: idx is a latent temporal index, derive actions from it."""
+        """Latent mode: lt is 0-indexed after skipping latent frame 0.
+
+        WAN VAE layout:
+            latent 0 = video frame 0 (single frame, skipped)
+            latent 1 = video frames 1-4
+            latent 2 = video frames 5-8
+            latent k = video frames 1+4*(k-1) to 4*k
+
+        So lt=0 here maps to actual latent index 1, video frames 1-4.
+        """
         tf = self._temporal_factor
         lcs = self._latent_chunk_size
 
-        # Slice latents: lt is the latent temporal index
+        # Actual latent index = lt + 1 (skip frame 0)
+        actual_lt = lt + 1
         latent_data = self._get_latent(task_id, demo_key)
-        agentview_latent = latent_data["agentview"][:, lt:lt + lcs].clone()
-        wrist_latent = latent_data["wrist"][:, lt:lt + lcs].clone()
+        agentview_latent = latent_data["agentview"][:, actual_lt:actual_lt + lcs].clone()
+        wrist_latent = latent_data["wrist"][:, actual_lt:actual_lt + lcs].clone()
 
-        # Derive action range from latent index
-        action_start = lt * tf
-        action_end = action_start + self.chunk_size
+        # Map to video frame range: latent (lt+1) starts at video frame 1 + 4*lt
+        action_start = 1 + tf * lt
+        action_end = action_start + lcs * tf
         f = self._get_h5(hdf5_path)
         grp = f[f"data/{demo_key}"]
         action = grp["actions"][action_start:action_end].astype(np.float32)
