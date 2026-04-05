@@ -15,7 +15,7 @@ Output structure:
             ...
 
 Usage:
-    python -m jasper.libero.precompute_vae_latents \
+    python -m jasper.libero.precompute_cosmos_vae_latents \
         --dataset-dir /home/ubuntu/workspace/LIBERO/libero/datasets/libero_90 \
         --output-dir /home/ubuntu/workspace/LIBERO/libero/datasets/libero_90_vae_latents
 """
@@ -46,12 +46,16 @@ def pad_temporal(frames_tensor, factor):
     return torch.cat([frames_tensor, padding], dim=2), pad_t
 
 
-def encode_video(vae, frames_np, temporal_factor, device, dtype):
+def encode_video(vae, frames_np, temporal_factor, device, dtype,
+                  latents_mean=None, latents_std=None, sigma_data=1.0):
     """
-    Encode a full video through the Cosmos VAE.
+    Encode a full video through the Cosmos VAE with proper normalization.
 
     Args:
         frames_np: (T, H, W, 3) uint8, already vertically flipped
+        latents_mean: per-channel mean for normalization
+        latents_std: per-channel std for normalization
+        sigma_data: scheduler's data scaling factor
     Returns:
         latent: (z_dim, lt, lh, lw) float32 on CPU
         num_padded: number of temporal frames padded
@@ -65,6 +69,10 @@ def encode_video(vae, frames_np, temporal_factor, device, dtype):
 
     with torch.no_grad():
         latent = vae.encode(frames).latent_dist.sample()
+
+        # Normalize latents to match what the Cosmos transformer expects
+        if latents_mean is not None:
+            latent = (latent - latents_mean) / latents_std * sigma_data
 
     return latent.squeeze(0).float().cpu(), num_padded
 
@@ -97,7 +105,7 @@ def main():
     device = "cuda"
     dtype = torch.bfloat16
 
-    print("Loading Cosmos VAE...")
+    print("Loading Cosmos pipeline...")
     pipeline = Cosmos2VideoToWorldPipeline.from_pretrained(
         "nvidia/Cosmos-Predict2-2B-Video2World",
     )
@@ -109,6 +117,12 @@ def main():
     spatial_factor = vae.config.scale_factor_spatial
     z_dim = vae.config.z_dim
 
+    # Latent normalization parameters (critical for Cosmos transformer compatibility)
+    latents_mean = torch.tensor(vae.config.latents_mean).view(1, z_dim, 1, 1, 1).to(device, dtype)
+    latents_std = torch.tensor(vae.config.latents_std).view(1, z_dim, 1, 1, 1).to(device, dtype)
+    sigma_data = pipeline.scheduler.config.sigma_data
+    print(f"Latent normalization: sigma_data={sigma_data}")
+
     del pipeline
     torch.cuda.empty_cache()
 
@@ -116,7 +130,8 @@ def main():
 
     # Probe latent dims from a test encode
     test_frames = np.random.randint(0, 255, (temporal_factor, 128, 128, 3), dtype=np.uint8)
-    test_latent, _ = encode_video(vae, test_frames, temporal_factor, device, dtype)
+    test_latent, _ = encode_video(vae, test_frames, temporal_factor, device, dtype,
+                                  latents_mean, latents_std, sigma_data)
     _, lh, lw = test_latent.shape[1:]  # spatial latent dims
     print(f"Test: {temporal_factor} frames -> latent {tuple(test_latent.shape)}")
     del test_frames, test_latent
@@ -181,6 +196,9 @@ def main():
         "encoder_dim": z_dim,
         "latent_spatial_h": lh,
         "latent_spatial_w": lw,
+        "sigma_data": sigma_data,
+        "latents_mean": vae.config.latents_mean,
+        "latents_std": vae.config.latents_std,
     }
     with open(output_dir / "metadata.json", "w") as f:
         json.dump(metadata, f, indent=2)
@@ -213,10 +231,12 @@ def main():
             wrist_frames = grp["obs/eye_in_hand_rgb"][()][:, ::-1].copy()
 
         agentview_latent, ag_pad = encode_video(
-            vae, agentview_frames, temporal_factor, device, dtype
+            vae, agentview_frames, temporal_factor, device, dtype,
+            latents_mean, latents_std, sigma_data,
         )
         wrist_latent, _ = encode_video(
-            vae, wrist_frames, temporal_factor, device, dtype
+            vae, wrist_frames, temporal_factor, device, dtype,
+            latents_mean, latents_std, sigma_data,
         )
 
         torch.save({

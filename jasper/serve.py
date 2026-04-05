@@ -1,15 +1,19 @@
 """
 Usage:
     python -m jasper.serve --ckpt-path ./ckpts/libero/checkpoint_24000.pt --compile
-    python -m jasper.serve --ckpt-path ./ckpts/robotwin/checkpoint_10000.pt
+    python -m jasper.serve --ckpt-path ./ckpts/libero/checkpoint_24000.pt --prompt-embeds ./prompt_embeds.pt
 
 Protocol:
-    Client sends msgpack with:
-        {"views": [[frame, frame, ...], [frame, frame, ...], ...]}
-    where each view is a list of T serialized frames (dict with "data", "shape", "dtype"),
-    and each frame is a (H, W, 3) uint8 numpy array.
+    1. Client sends handshake: {"type": "handshake"}
+       Server responds: {"mode": "frames"|"latents", "chunk_size": N, "action_horizon": N}
 
-    Server responds with:
+    2a. Frame mode - client sends:
+        {"type": "predict", "views": [[frame, ...], [frame, ...], ...]}
+    2b. Latent mode - client sends:
+        {"type": "predict", "latents": {"data": bytes, "shape": [...], "dtype": str},
+         "prompt_embeds": {"data": bytes, "shape": [...], "dtype": str}}
+
+    Server responds:
         {"actions": {"data": bytes, "shape": [1, T, action_dim], "dtype": "float32"}}
 """
 
@@ -30,15 +34,12 @@ def load_config(ckpt_dir):
     return config
 
 
+def deserialize_tensor(msg):
+    """Deserialize a msgpack tensor dict to numpy array."""
+    return np.frombuffer(msg["data"], dtype=msg["dtype"]).reshape(msg["shape"])
+
+
 def decode_view(frames_list):
-    """Decode a list of serialized frames for one view and preprocess with V-JEPA2.
-
-    Args:
-        frames_list: list of T dicts with keys "data", "shape", "dtype"
-
-    Returns:
-        Tensor of shape (3, T, 256, 256)
-    """
     frames = []
     for frame_msg in frames_list:
         arr = np.frombuffer(frame_msg["data"], dtype=frame_msg["dtype"]).reshape(
@@ -49,16 +50,39 @@ def decode_view(frames_list):
 
 
 def preprocess_views(views):
-    """Preprocess N views into (1, N, 3, T, 256, 256).
-
-    Args:
-        views: list of N lists, each containing T serialized frames.
-
-    Returns:
-        Tensor of shape (1, N, 3, T, 256, 256)
-    """
     tensors = [decode_view(view) for view in views]
-    return torch.stack(tensors).unsqueeze(0).to(config.device)  # (1, N, 3, T, 256, 256)
+    return torch.stack(tensors).unsqueeze(0).to(config.device)
+
+
+def predict_frames(msg):
+    """Handle frame-based prediction (VJEPA mode)."""
+    views = msg["views"]
+    images = preprocess_views(views)
+    actions = model.sample_action(images, num_steps=30)
+    return actions
+
+
+def predict_latents(msg):
+    """Handle latent-based prediction (Cosmos mode)."""
+    latents_np = deserialize_tensor(msg["latents"])
+    latents = torch.from_numpy(latents_np.copy()).unsqueeze(0).to(config.device)
+
+    prompt_np = deserialize_tensor(msg["prompt_embeds"])
+    prompt_embs = torch.from_numpy(prompt_np.copy()).unsqueeze(0).to(config.device)
+
+    actions = model.sample_action(latents, num_steps=30, prompt_embs=prompt_embs, t_v=0.42)
+    return actions
+
+
+def serialize_actions(actions):
+    actions_np = actions.cpu().numpy()
+    return {
+        "actions": {
+            "data": actions_np.tobytes(),
+            "shape": list(actions_np.shape),
+            "dtype": str(actions_np.dtype),
+        },
+    }
 
 
 async def handle_client(websocket):
@@ -66,33 +90,27 @@ async def handle_client(websocket):
     try:
         async for raw_message in websocket:
             msg = msgpack.unpackb(raw_message, raw=False)
-            views = msg["views"]  # list of N views, each with T frames
+            msg_type = msg.get("type", "predict")
 
-            for i, view in enumerate(views):
-                if len(view) != CHUNK_SIZE:
-                    error = msgpack.packb(
-                        {"error": f"View {i}: expected {CHUNK_SIZE} frames, got {len(view)}"}
-                    )
-                    await websocket.send(error)
-                    break
-            else:
-                with torch.no_grad():
-                    images = preprocess_views(views)
-                    actions = model.sample_action(
-                        images, num_steps=30
-                    )  # (1, action_horizon, action_dim)
-
-                actions_np = actions.cpu().numpy()
+            if msg_type == "handshake":
                 response = msgpack.packb(
                     {
-                        "actions": {
-                            "data": actions_np.tobytes(),
-                            "shape": list(actions_np.shape),
-                            "dtype": str(actions_np.dtype),
-                        },
+                        "mode": MODE,
+                        "chunk_size": CHUNK_SIZE,
+                        "action_horizon": config.action_horizon,
                     }
                 )
                 await websocket.send(response)
+                continue
+
+            with torch.no_grad():
+                if MODE == "latents":
+                    actions = predict_latents(msg)
+                else:
+                    actions = predict_frames(msg)
+
+            await websocket.send(msgpack.packb(serialize_actions(actions)))
+
     except websockets.exceptions.ConnectionClosed:
         print(f"Client disconnected: {websocket.remote_address}")
 
@@ -101,22 +119,20 @@ async def serve():
     host = "0.0.0.0"
     port = 8765
     print(f"Starting server on ws://{host}:{port}")
+    print(f"Mode: {MODE}")
     async with websockets.serve(handle_client, host, port, max_size=100 * 1024 * 1024):
-        await asyncio.Future()  # run forever
+        await asyncio.Future()
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Runs the policy server"
-    )
+    parser = argparse.ArgumentParser(description="Runs the policy server")
+    parser.add_argument("--ckpt-path", type=str, required=True)
+    parser.add_argument("--compile", action="store_true")
     parser.add_argument(
-        "--ckpt-path",
+        "--prompt-embeds",
         type=str,
-        required=True,
-        help="Path to the checkpoint",
-    )
-    parser.add_argument(
-        "--compile", action='store_true', help="Whether to compile vision encoder or not"
+        default=None,
+        help="Path to precomputed prompt embeddings (for Cosmos mode)",
     )
     args = parser.parse_args()
 
@@ -125,7 +141,13 @@ if __name__ == "__main__":
 
     config = JasperConfig(**load_config(ckpt_dir))
     model = Jasper(config).to(config.device, non_blocking=True)
-    processor = torch.hub.load("facebookresearch/vjepa2", "vjepa2_preprocessor")
+
+    # Determine mode from config
+    if config.vjepa2_model is not None:
+        MODE = "frames"
+        processor = torch.hub.load("facebookresearch/vjepa2", "vjepa2_preprocessor")
+    else:
+        MODE = "latents"
 
     if args.compile:
         model.vision_encoder = torch.compile(model.vision_encoder)

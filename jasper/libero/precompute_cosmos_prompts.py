@@ -4,7 +4,7 @@ Precompute T5 prompt embeddings for all LIBERO tasks.
 Saves a single .pt file mapping task_name -> prompt_embedding tensor.
 
 Usage:
-    python -m jasper.libero.precompute_prompts \
+    python -m jasper.libero.precompute_cosmos_prompts \
         --dataset-dir /home/ubuntu/workspace/LIBERO/libero/datasets/libero_90 \
         --output-path /home/ubuntu/workspace/LIBERO/libero/datasets/libero_90/prompt_embeds.pt
 """
