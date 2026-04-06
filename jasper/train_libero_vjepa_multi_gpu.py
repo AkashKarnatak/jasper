@@ -17,7 +17,7 @@ from torch.utils.data.distributed import DistributedSampler
 from pathlib import Path
 from torch.utils.tensorboard import SummaryWriter
 from .jasper import Jasper, JasperConfig
-from .libero.dataset import LiberoDataset
+from .libero.dataset_vjepa import LiberoVJEPADataset
 
 
 def cycle(dataloader):
@@ -168,11 +168,10 @@ def main():
         del resume_ckpt
 
     # ---- Dataset & Dataloader ----
-    dataset = LiberoDataset(
+    dataset = LiberoVJEPADataset(
         dataset_dir=dataset_dir,
+        chunk_size=config.action_horizon,
         norm_stats_path=norm_stats_path,
-        chunk_size=config.action_horizon+1,
-        use_vjepa2=True,
     )
     sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank, shuffle=True)
     dataloader = DataLoader(
@@ -201,7 +200,9 @@ def main():
 
         batch = next(dl_iter)
 
-        images = batch["agentview_rgb"].to(device, non_blocking=True)
+        head = batch["agentview"].to(device, non_blocking=True)
+        wrist = batch["eye_in_hand"].to(device, non_blocking=True)
+        images = torch.stack([head, wrist], dim=1)
         action = batch["action"].to(device, non_blocking=True)
 
         with torch.amp.autocast(device_type="cuda", dtype=amp_dtype):

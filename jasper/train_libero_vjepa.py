@@ -5,7 +5,7 @@ from torch.utils.data import DataLoader
 from pathlib import Path
 from torch.utils.tensorboard import SummaryWriter
 from .jasper import Jasper, JasperConfig
-from .libero.dataset import LiberoDataset
+from .libero.dataset_vjepa import LiberoVJEPADataset
 
 
 def cycle(dataloader):
@@ -69,11 +69,10 @@ scheduler = torch.optim.lr_scheduler.SequentialLR(
     milestones=[warmup_steps],
 )
 
-dataset = LiberoDataset(
+dataset = LiberoVJEPADataset(
     dataset_dir=dataset_dir,
+    chunk_size=config.action_horizon,
     norm_stats_path=norm_stats_path,
-    chunk_size=config.action_horizon+1,
-    use_vjepa2=True,
 )
 dataloader = DataLoader(
     dataset,
@@ -91,8 +90,8 @@ dump_config(config, ckpt_dir)
 for step in range(max_steps):
     batch = next(dl_iter)
 
-    head = batch["agentview_rgb"].to(device, non_blocking=True)
-    wrist = batch["eye_in_hand_rgb"].to(device, non_blocking=True)
+    head = batch["agentview"].to(device, non_blocking=True)
+    wrist = batch["eye_in_hand"].to(device, non_blocking=True)
     images = torch.stack([head, wrist], dim=1)
     action = batch["action"].to(device, non_blocking=True)
 
