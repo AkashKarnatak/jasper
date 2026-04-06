@@ -177,7 +177,7 @@ def main():
         dataset_dir=dataset_dir,
         norm_stats_path=norm_stats_path,
         chunk_size=config.action_horizon,
-        use_vjepa2=True,
+        use_vjepa2=False,
         prompt_embeds_path=prompt_embeds_path,
         latent_dir=latent_dir,
     )

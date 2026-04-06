@@ -59,7 +59,7 @@ def main():
     norm_stats_path = (
         "/home/ubuntu/workspace/LIBERO/libero/datasets/libero_90/norm_stats.npz"
     )
-    ckpt_dir = Path("./ckpts/libero")
+    ckpt_dir = Path("./ckpts/libero/vjepa")
 
     # Batch: 32/gpu × 8 gpus = 256 effective.
     # 256 is a well-tested batch size for diffusion transformers (DiT, SD3, etc).
@@ -112,14 +112,14 @@ def main():
         dtype="float32",
         action_dim=7,
         action_horizon=10,
-        hidden_dim=1536,
+        hidden_dim=768,
         num_heads=12,
-        head_dim=128,
-        ff_dim=4096,
-        depth=16,
+        head_dim=64,
+        ff_dim=2048,
+        depth=12,
         attn_dropout=0.0,  # no attn dropout — hurts diffusion quality more than it helps
         dropout=0.0,       # regularize via weight decay + EMA instead of dropout
-        vjepa2_model="vjepa2_1_vit_gigantic_384",
+        vjepa2_model="vjepa2_1_vit_large_384",
     )
     model = Jasper(config).to(device)
     torch.set_float32_matmul_precision("high")
@@ -171,7 +171,7 @@ def main():
     dataset = LiberoDataset(
         dataset_dir=dataset_dir,
         norm_stats_path=norm_stats_path,
-        chunk_size=config.action_horizon,
+        chunk_size=config.action_horizon+1,
         use_vjepa2=True,
     )
     sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank, shuffle=True)

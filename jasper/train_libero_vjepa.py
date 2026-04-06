@@ -23,7 +23,7 @@ dataset_dir = "/home/ubuntu/workspace/LIBERO/libero/datasets/libero_90"
 norm_stats_path = (
     "/home/ubuntu/workspace/LIBERO/libero/datasets/libero_90/norm_stats.npz"
 )
-ckpt_dir = Path("./ckpts/libero")
+ckpt_dir = Path("./ckpts/libero/vjepa")
 batch_size = 64
 amp_dtype = torch.bfloat16
 device = "cuda"
@@ -42,19 +42,19 @@ config = JasperConfig(
     dtype="float32",
     action_dim=7,
     action_horizon=10,
-    hidden_dim=1536,
+    hidden_dim=768,
     num_heads=12,
-    head_dim=128,
-    ff_dim=4096,
-    depth=16,
+    head_dim=64,
+    ff_dim=2048,
+    depth=12,
     attn_dropout=0.1,
     dropout=0.1,
-    vjepa2_model="vjepa2_1_vit_gigantic_384",
+    vjepa2_model="vjepa2_1_vit_large_384",
 )
 model = Jasper(config).to(device, non_blocking=True)
 torch.set_float32_matmul_precision("high")
 scaler = torch.amp.GradScaler(enabled=False)
-model.vision_encoder = torch.compile(model.vision_encoder, mode="max-autotune")
+# model.vision_encoder = torch.compile(model.vision_encoder, mode="max-autotune")
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
 warmup_scheduler = torch.optim.lr_scheduler.LinearLR(
@@ -72,7 +72,7 @@ scheduler = torch.optim.lr_scheduler.SequentialLR(
 dataset = LiberoDataset(
     dataset_dir=dataset_dir,
     norm_stats_path=norm_stats_path,
-    chunk_size=config.action_horizon,
+    chunk_size=config.action_horizon+1,
     use_vjepa2=True,
 )
 dataloader = DataLoader(
